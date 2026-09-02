@@ -1,0 +1,198 @@
+# G-code for PartCAD parts, written by gscrib.
+#
+# This is a `cam:` package, which is neither an `export:` one nor a `render:`
+# one. The three sections are not three names for the same thing:
+#
+#   `export:` is for files a CAD tool opens as a part or a sketch - geometry
+#             another tool can go on working with.
+#   `render:` is for output files in general - a drawing, a picture, a report.
+#   `cam:`    is for the instructions that *make* the part: a program for one
+#             machine, correct only for that machine.
+#
+# G-code is the third. Nothing downstream can load it as geometry and nothing
+# reads it as a document; what it is for is being executed by a printer, and it
+# is wrong on any other printer. That is why PartCAD ships no `cam:`
+# implementation of its own and why this package exists.
+#
+# `pc cam <part>` writes it. The package keeps its own copy of the file next to
+# the part - written once and reused afterwards, so the instructions are
+# something a repository can hold - and the command leaves a copy where it was
+# run, which is the one to feed to a machine.
+
+name: //pub/feature/cam/gscrib
+desc: G-code for FDM 3D printers, generated from PartCAD parts by gscrib.
+
+docs:
+  intro: |
+    Turns a PartCAD part into the G-code that makes it, using
+    [gscrib](https://github.com/joansalasoler/gscrib).
+
+    It is a real slicer in the sense that matters: it sections the solid at
+    every layer, walks the contours in, lays perimeters along them, fills what
+    is left, and writes moves and extrusions a printer will execute. It is a
+    small one. There is **no support generation**, no bridging, no cooling
+    logic, no seam placement and no variable layer height, and the infill is
+    rectilinear. Read what it writes before feeding it to a machine.
+
+    What it is told comes from three places, and each is more specific than the
+    one before it:
+
+    1. the **machine** - the `additive` tool the part's `manufacturing:` section
+       names, whose ranges may carry a default and whose `positioning:` section
+       is what the preamble is built from;
+    2. the **part** - the values in its own `manufacturing:` section;
+    3. the **file type** - anything set on `cam: gcode:` in `partcad.yaml`,
+       which is the most specific thing an author can write for one file.
+
+    A part that says nothing still gets a file. It gets a warning with it,
+    because a file made entirely of defaults is not one to print.
+
+    ### Seeing it before printing it
+
+    ```shell
+    pc cam --visual :bracket
+    ```
+
+    writes an STL of what the G-code *puts down* rather than of the part: every
+    perimeter and every fill line as a solid of the width the nozzle lays and
+    the height of one layer. The walls, the gaps between them and the fill
+    pattern are all in it, which is what is worth looking at before a print and
+    what a picture of the part cannot show. The PartCAD Viewer's **CAM** tab in
+    the VS Code extension shows the same model.
+
+  usage: |
+    Point a part at a machine and ask for the instructions:
+
+    ```yaml
+    dependencies:
+      pub:
+        type: git
+        url: https://github.com/partcad/partcad-index.git
+
+    parts:
+      bracket:
+        type: build123d
+        manufacturable: true
+        properties:
+          material: PLA
+        manufacturing:
+          method: additive
+          tool: //pub/feature/cam/gscrib:fdm
+          layerHeight: 0.2
+          infill: 0.25
+
+    cam:
+      gcode:
+        package: //pub/feature/cam/gscrib
+        path: cam_gscrib.py
+        extension: gcode
+        visual: stl
+    ```
+
+    ```shell
+    pc cam :bracket                 # bracket.gcode, here and in the package
+    pc cam --visual :bracket        # bracket.stl: what that G-code deposits
+    pc cam -o job1.gcode :bracket   # the copy, under a name of your own
+    ```
+
+    Or read the configuration from here instead of declaring it, which draws a
+    part of any package without that package knowing about this one:
+
+    ```shell
+    pc cam -e //pub/feature/cam/gscrib //your/package:bracket
+    ```
+
+# What the sandbox this package's implementation runs in needs installed.
+#
+# Declared for the package rather than per file type: it is one implementation
+# behind everything here, so it is one dependency.
+#
+# gscrib brings its own stack (numpy, scipy, scikit-image, opencv) and none of
+# it touches OCCT, so it is named first and left to resolve. build123d and
+# cadquery-ocp are PartCAD's own pins, in PartCAD's own order: build123d pulls
+# `cadquery-ocp-novtk`, which overwrites the OCP native module, so the
+# VTK-enabled `cadquery-ocp` is asserted after it.
+#
+# Anchored with `==` rather than left open so that a program produced today can
+# be produced again tomorrow. Bump it deliberately: G-code that changes under a
+# machine is worse than G-code that is out of date.
+pythonVersion: "3.11"
+pythonRequirements:
+  - gscrib==1.2.0
+  - build123d==0.11.1
+  - cadquery-ocp==7.9.3.1.1
+
+cam:
+  gcode:
+    desc: The G-code that makes this part, for an FDM printer.
+    path: cam_gscrib.py
+    extension: gcode
+    # What `pc cam --visual` writes, and what the PartCAD Viewer's CAM tab
+    # shows: the implementation's second entry point, `process_visual()`,
+    # produces an STL of the beads the G-code lays down.
+    visual: stl
+
+    # Every other field is a parameter handed to the implementation as it
+    # stands, so anything the part's `manufacturing:` section sets can be
+    # overridden here for this one file. None are set: an unset one falls
+    # through to the part, then to the machine, then to a plain default.
+    #
+    #   layerHeight, spotSize, speed, temperature, bedTemperature,
+    #   infill, perimeters, material
+    #
+    # And three that are this implementation's own:
+    #
+    #   filamentDiameter  the filament the extrusion arithmetic assumes, in mm
+    #                     (default 1.75)
+    #   resolution        how finely a curved edge is walked, in mm (default
+    #                     0.4). A straight edge is not walked at all.
+    #   place             "bed" (default) sets the part down in the middle of
+    #                     the build area; "asIs" leaves it where the model has
+    #                     it, for a package whose coordinates already are the
+    #                     machine's.
+
+parts:
+  # What the tool below is drawn as. Following the convention every PartCAD tool
+  # visual follows: the working end at the origin, the body along -Z, so that it
+  # can be placed at a port without knowing anything about what it is acting on.
+  nozzle:
+    type: build123d
+    path: nozzle.py
+    desc: The likeness of an FDM hot end, for drawing where material is put down
+    manufacturable: false
+
+tools:
+  additive:
+    fdm:
+      desc: |
+        A generic desktop FDM printer: a 220 x 220 x 250mm bed, a 0.4mm nozzle
+        and the ranges such a machine works in. Point a part's `manufacturing:`
+        section at it to get something printable without describing a machine
+        first, and declare a tool of your own once you know which machine.
+      visual: nozzle
+      process: fdm
+      materials: [PLA, PETG, ABS, ASA, TPU]
+      buildVolume: [220.0, 220.0, 250.0]
+      # The smallest move each axis can make: 0.0125mm on X and Y (a 16-tooth
+      # GT2 pulley on a 1.8-degree stepper at 1/16 microstepping) and 0.0025mm
+      # on Z (an 8mm-lead screw on the same). What says whether a feature is
+      # reachable at all.
+      stepSize: [0.0125, 0.0125, 0.0025]
+      layerHeight: { min: 0.05, max: 0.32, default: 0.2 }
+      spotSize: { min: 0.25, max: 0.8, default: 0.4 }
+      speed: { min: 10.0, max: 200.0, default: 60.0 }
+      temperature: { min: 170.0, max: 300.0, default: 210.0 }
+      bedTemperature: { min: 0.0, max: 120.0, default: 60.0 }
+      positioning:
+        units: mm
+        absolute: true
+        home: [z, x, y]
+        homeFeedRate: 3000
+        travelFeedRate: 9000
+        safeZ: 5.0
+        origin: [0.0, 0.0, 0.0]
+        bedLeveling: auto
+        prime:
+          length: 100.0
+          extrude: 8.0
+          feedRate: 1200
