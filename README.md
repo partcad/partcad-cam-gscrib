@@ -115,10 +115,13 @@ the VS Code extension shows the same model.
 ## What it is not
 
 It is a small slicer. There is **no support generation**, no bridging, no
-cooling logic, no seam placement, no retraction and no variable layer height,
-and the infill is rectilinear. A part with overhangs needs supports this does
-not produce, and one with many separate islands per layer will string between
-them, because the filament is never pulled back on a travel move.
+cooling logic, no seam placement and no variable layer height, and the infill is
+rectilinear. A part with overhangs needs supports this does not produce.
+
+It does retract, but only because the machine says how: a tool with no
+`retraction:` section gets no retraction, and a part printed on one will string
+between the islands of a layer. Set it on the tool, not here -- how far the
+filament has to come back is a fact about the extruder.
 
 Read what it writes before feeding it to a machine. That is true of every
 slicer, and more so of this one.

@@ -148,6 +148,16 @@ def settings_of(request):
     settings["filamentDiameter"] = _number(request.get("filamentDiameter"), DEFAULT_FILAMENT_DIAMETER)
     settings["resolution"] = _number(request.get("resolution"), DEFAULT_RESOLUTION)
     settings["positioning"] = dict(tool.get("positioning") or {})
+    # Whether the machine can pull the filament back, and by how much. Empty for
+    # a machine that says nothing, which PartCAD already collapses "said nothing"
+    # and "said no distance" into - so an empty section here means one thing:
+    # never retract. The file type may override any of it, for a spool that
+    # oozes more than the machine was measured with.
+    retraction = dict(tool.get("retraction") or {})
+    for field in ("distance", "feedRate", "zHop", "minTravel"):
+        if request.get("retraction" + field[0].upper() + field[1:]) is not None:
+            retraction[field] = _number(request.get("retraction" + field[0].upper() + field[1:]), retraction.get(field))
+    settings["retraction"] = retraction if _number(retraction.get("distance"), 0.0) > 0.0 else {}
     settings["buildVolume"] = tool.get("buildVolume")
     settings["machine"] = tool.get("name")
     place = request.get("place") or "bed"
@@ -412,12 +422,38 @@ def _prime(g, positioning, settings, shape):
     g.move(x=box.min.X + length, e=extrude)
 
 
+def _pull(g, settings, feed, sign):
+    """Pull the filament back, or push it in again: 'sign' says which.
+
+    Extrusion is relative (the preamble sets M83), so this is a move on the
+    extruder alone and nothing else has to be tracked. The caller sets whatever
+    feed rate it needs next, so the one used here is not restored.
+    """
+    retraction = settings["retraction"]
+    if not retraction:
+        return
+    g.set_feed_rate(_number(retraction.get("feedRate"), feed))
+    g.move(e=sign * retraction["distance"])
+
+
 def _write_layers(g, layers, settings):
     """Every layer, perimeters first and then the fill, in travel order."""
     feed = settings["speed"] * 60.0  # gscrib feed rates are per minute
     travel = _number(settings["positioning"].get("travelFeedRate"), feed * 2.0)
     safe = _number(settings["positioning"].get("safeZ"), 5.0)
+    retraction = settings["retraction"]
+    # How far to lift to travel between two paths. The machine's 'zHop' is the
+    # answer where it gives one: what a travel inside a layer has to clear is
+    # what is already down at that layer, which a fraction of a millimetre does.
+    # 'safeZ' is the fallback and is the height the preamble crosses the machine
+    # at - far more than this needs, and what every file this wrote before the
+    # machine could state a hop used.
+    hop = _number(retraction.get("zHop"), 0.0) if retraction else 0.0
+    lift = hop if hop > 0.0 else safe
+    # Below this a travel strings less than the retraction itself costs.
+    min_travel = _number(retraction.get("minTravel"), 0.0) if retraction else 0.0
 
+    here = None
     for number, layer in enumerate(layers, start=1):
         if layer.empty:
             continue
@@ -425,10 +461,18 @@ def _write_layers(g, layers, settings):
         for path in layer.perimeters + layer.infill:
             if len(path) < 2:
                 continue
+            # Retract only for a travel worth retracting for, and never for the
+            # very first one: there is nothing behind the nozzle to pull back
+            # from, and the prime line put it there on purpose.
+            pulled = here is not None and _distance(here, path[0]) >= min_travel
+            if pulled:
+                _pull(g, settings, feed, -1.0)
             g.set_feed_rate(travel)
-            g.rapid(z=layer.z + safe)
+            g.rapid(z=layer.z + lift)
             g.rapid(x=path[0][0], y=path[0][1])
             g.rapid(z=layer.z)
+            if pulled:
+                _pull(g, settings, feed, 1.0)
             g.set_feed_rate(feed)
             previous = path[0]
             for point in path[1:]:
@@ -437,6 +481,7 @@ def _write_layers(g, layers, settings):
                     continue
                 g.move(x=point[0], y=point[1], e=_extrusion(length, settings))
                 previous = point
+            here = previous
 
 
 def _epilogue(g, settings, shape):
@@ -455,6 +500,9 @@ def _epilogue(g, settings, shape):
     travel = _number(positioning.get("travelFeedRate"), settings["speed"] * 60.0 * 2.0)
 
     g.comment("Done")
+    # Pulled back before the lift, so the last thing the nozzle does over the
+    # print is stop pushing rather than trail a thread across it on the way out.
+    _pull(g, settings, settings["speed"] * 60.0, -1.0)
     g.set_feed_rate(travel)
     g.rapid(z=shape.bounding_box().max.Z + safe_z)
     g.set_hotend_temperature(0)

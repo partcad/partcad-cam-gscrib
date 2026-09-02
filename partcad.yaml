@@ -196,3 +196,14 @@ tools:
           length: 100.0
           extrude: 8.0
           feedRate: 1200
+
+      # What it pulls back when it stops putting material down, so it does not
+      # string across the gap to wherever it prints next. These are the numbers
+      # a generic Bowden desktop machine works with; a direct drive wants nearer
+      # 0.5mm, which is a reason to declare a tool of your own once you know
+      # which machine you have.
+      retraction:
+        distance: 1.0    # mm of filament
+        feedRate: 2400   # mm/min
+        zHop: 0.4        # mm to lift while travelling retracted
+        minTravel: 1.5   # mm; a shorter hop is not worth the retraction
