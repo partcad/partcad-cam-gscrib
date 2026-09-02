@@ -439,6 +439,36 @@ def _write_layers(g, layers, settings):
                 previous = point
 
 
+def _epilogue(g, settings, shape):
+    """Leave the machine safe, which is the other half of `_preamble`.
+
+    A file that simply stops after the last bead leaves the hotend at printing
+    temperature, the bed hot and the steppers holding, with the nozzle parked on
+    top of the print. Every step here undoes something the preamble did, and the
+    order is the part that matters: lift clear of the print *before* turning the
+    heat off, because a nozzle cooling while resting on the last layer welds
+    itself to it.
+    """
+    positioning = settings["positioning"]
+    origin = positioning.get("origin") or [0.0, 0.0, 0.0]
+    safe_z = _number(positioning.get("safeZ"), 5.0)
+    travel = _number(positioning.get("travelFeedRate"), settings["speed"] * 60.0 * 2.0)
+
+    g.comment("Done")
+    g.set_feed_rate(travel)
+    g.rapid(z=shape.bounding_box().max.Z + safe_z)
+    g.set_hotend_temperature(0)
+    if settings["bedTemperature"] > 0.0:
+        g.set_bed_temperature(0)
+    # Out of the way, so the print can be lifted off without reaching past the
+    # nozzle to do it.
+    g.rapid(x=origin[0], y=origin[1])
+    # Written out rather than called: gscrib's `power_off()` is `M05`, which
+    # stops a spindle. What an FDM machine wants at the end is its steppers
+    # released.
+    g.write("M84 ; Disable steppers")
+
+
 def process(path, request):
     """Write the G-code that makes this part."""
     try:
@@ -452,6 +482,7 @@ def process(path, request):
         try:
             _preamble(g, settings, shape)
             _write_layers(g, layers, settings)
+            _epilogue(g, settings, shape)
         finally:
             g.teardown()
 
