@@ -47,7 +47,6 @@ slicer, and more so of this one.
 """
 
 import math
-import os
 import traceback
 
 import build123d as b3d
