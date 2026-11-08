@@ -90,7 +90,7 @@ A value nobody gives falls through to a plain default. A part that says nothing
 still gets a file — and a warning with it, because a file made entirely of
 defaults is not one to print.
 
-`pc test` is where the part and the machine are held to each other: its
+`pc qual test` is where the part and the machine are held to each other: its
 `cam-additive` check fails a part whose setting is outside the machine's range,
 whose material the machine does not take, or whose bounding box does not fit the
 build volume.
